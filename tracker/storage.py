@@ -4,7 +4,7 @@ DB lives at data/tracker.db relative to the project root.
 """
 import json
 import sqlite3
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 DB_PATH = Path(__file__).parent.parent / "data" / "tracker.db"
@@ -103,11 +103,20 @@ def get_last_n_weeks_snapshots(n: int = 2) -> list[dict]:
 
 
 def get_peak_weekly_tokens() -> int:
-    """Return the highest total tokens seen in any single week."""
+    """Return the highest end-of-week total from any COMPLETED past week.
+    Only looks at weeks before the current one to avoid using a partial
+    mid-week cumulative as the budget estimate.
+    """
     init_db()
+    current_week_start = date.today() - timedelta(days=date.today().weekday())
     with _conn() as con:
         row = con.execute(
-            "SELECT week_start, MAX(tokens_used) as peak FROM daily_snapshots GROUP BY week_start ORDER BY peak DESC LIMIT 1"
+            """
+            SELECT MAX(tokens_used) as peak
+            FROM daily_snapshots
+            WHERE week_start < ?
+            """,
+            (current_week_start.isoformat(),),
         ).fetchone()
     return row["peak"] if row and row["peak"] else 0
 
