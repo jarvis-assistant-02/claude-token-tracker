@@ -1,7 +1,7 @@
 """
 Parse ~/.claude/projects/**/*.jsonl to sum token usage for the current (or any) week.
 Counts: input_tokens + output_tokens + cache_creation_input_tokens.
-cache_read_input_tokens are intentionally excluded — they don't consume new capacity.
+cache_read_input_tokens are excluded — they don't consume new capacity.
 """
 import glob
 import json
@@ -13,17 +13,34 @@ from pathlib import Path
 CLAUDE_DIR = Path.home() / ".claude" / "projects"
 
 
-def _week_bounds(day: datetime | None = None, week_start_dow: int = 0) -> tuple[datetime, datetime]:
-    """Return (week_start, week_end) as UTC-aware datetimes for the week containing `day`.
-    week_start_dow: 0=Monday, 6=Sunday.
+def _week_bounds(
+    week_start_dow: int = 0,
+    week_reset_hour: int = 0,
+) -> tuple[datetime, datetime]:
     """
-    if day is None:
-        day = datetime.now(timezone.utc)
-    day = day.replace(tzinfo=timezone.utc) if day.tzinfo is None else day.astimezone(timezone.utc)
-    diff = (day.weekday() - week_start_dow) % 7
-    start = (day - timedelta(days=diff)).replace(hour=0, minute=0, second=0, microsecond=0)
-    end = start + timedelta(days=7)
-    return start, end
+    Return (week_start, week_end) as UTC-aware datetimes for the current week.
+
+    week_start_dow : 0=Monday … 6=Sunday
+    week_reset_hour: hour of day (local time) when the week resets (e.g. 9 = 09:00)
+    """
+    local_now = datetime.now()
+    days_since_start = (local_now.weekday() - week_start_dow) % 7
+
+    # Candidate: this week's reset moment in local time
+    candidate = (local_now - timedelta(days=days_since_start)).replace(
+        hour=week_reset_hour, minute=0, second=0, microsecond=0
+    )
+    # If we're before the reset moment (e.g. Monday 08:45 when reset is 09:00)
+    if local_now < candidate:
+        candidate -= timedelta(days=7)
+
+    end = candidate + timedelta(days=7)
+
+    # Convert to UTC-aware so we can compare with JSONL timestamps
+    local_tz = datetime.now().astimezone().tzinfo
+    start_utc = candidate.replace(tzinfo=local_tz).astimezone(timezone.utc)
+    end_utc   = end.replace(tzinfo=local_tz).astimezone(timezone.utc)
+    return start_utc, end_utc
 
 
 def _tokens_from_entry(entry: dict) -> int:
@@ -55,21 +72,17 @@ def sum_tokens_for_week(
     week_start: datetime | None = None,
     week_end: datetime | None = None,
     week_start_dow: int = 0,
+    week_reset_hour: int = 0,
 ) -> dict:
     """
-    Parse all JSONL files under CLAUDE_DIR and return a dict with:
-      - total_tokens: int
-      - input_tokens: int
-      - output_tokens: int
-      - cache_creation_tokens: int
-      - files_scanned: int
-      - week_start: datetime
-      - week_end: datetime
-      - daily_breakdown: dict[str, int]  (ISO date string → tokens)
-      - detected_limit: int | None  (inferred from rate-limit errors, if any)
+    Parse all JSONL files under CLAUDE_DIR and return:
+      total_tokens, input_tokens, output_tokens, cache_creation_tokens,
+      files_scanned, week_start, week_end,
+      daily_breakdown (ISO date → tokens),
+      detected_limit (int | None)
     """
     if week_start is None or week_end is None:
-        week_start, week_end = _week_bounds(week_start_dow=week_start_dow)
+        week_start, week_end = _week_bounds(week_start_dow, week_reset_hour)
 
     total = input_t = output_t = cache_t = 0
     files_scanned = 0
@@ -90,11 +103,10 @@ def sum_tokens_for_week(
                     except json.JSONDecodeError:
                         continue
 
-                    # Check for rate-limit / max-tokens error to auto-detect budget
+                    # Detect rate-limit error to auto-calibrate budget
                     if detected_limit is None:
                         err = entry.get("error") or (entry.get("message", {}) or {}).get("error")
                         if isinstance(err, dict) and "rate" in str(err.get("type", "")).lower():
-                            # Use current total at the time of hitting the limit as a floor
                             detected_limit = total
 
                     ts = _parse_timestamp(entry)
@@ -105,14 +117,14 @@ def sum_tokens_for_week(
                     if t == 0:
                         continue
 
-                    msg = entry.get("message", {}) or {}
+                    msg   = entry.get("message", {}) or {}
                     usage = msg.get("usage", {}) or {}
                     input_t += usage.get("input_tokens", 0)
                     output_t += usage.get("output_tokens", 0)
-                    cache_t += usage.get("cache_creation_input_tokens", 0)
-                    total += t
+                    cache_t  += usage.get("cache_creation_input_tokens", 0)
+                    total    += t
 
-                    day_key = ts.date().isoformat()
+                    day_key = ts.astimezone(datetime.now().astimezone().tzinfo).date().isoformat()
                     daily[day_key] = daily.get(day_key, 0) + t
 
         except (OSError, PermissionError):
@@ -129,11 +141,3 @@ def sum_tokens_for_week(
         "daily_breakdown": daily,
         "detected_limit": detected_limit,
     }
-
-
-def sum_tokens_for_previous_week(week_start_dow: int = 0) -> dict:
-    now = datetime.now(timezone.utc)
-    start, end = _week_bounds(now, week_start_dow)
-    prev_start = start - timedelta(days=7)
-    prev_end = start
-    return sum_tokens_for_week(prev_start, prev_end, week_start_dow)

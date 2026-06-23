@@ -139,6 +139,25 @@ def get_budget(key: str, default: str | None = None) -> str | None:
 
 def get_same_day_last_week(today_iso: str) -> dict | None:
     """Return the snapshot from exactly 7 days ago."""
-    from datetime import timedelta
     d = date.fromisoformat(today_iso) - timedelta(days=7)
     return get_snapshot(d.isoformat())
+
+
+def get_streak(daily_breakdown: dict, ideal_daily: float, week_start_date: date) -> int:
+    """
+    Count consecutive days from Monday up to yesterday where the day's
+    tokens met or exceeded the ideal daily target.
+    Stops at the first day below target or with no usage.
+    """
+    streak = 0
+    today = date.today()
+    for i in range(7):
+        day = week_start_date + timedelta(days=i)
+        if day >= today:
+            break
+        tokens = daily_breakdown.get(day.isoformat(), 0)
+        if tokens >= ideal_daily:
+            streak += 1
+        else:
+            streak = 0  # reset — only count consecutive
+    return streak
