@@ -1,29 +1,25 @@
 """
-Generate the weekly token usage chart as PNG bytes.
-Dark Discord-themed matplotlib figure with:
-  - Dual horizontal progress bars (used vs ideal pace)
-  - Daily vertical bar chart (Mon–Sun) with ideal-daily reference line
+Weekly token usage chart — Style 2A (Monochrome: white ring + iOS blue).
+Concentric rings (should-be outer, you-are inner) + daily bar chart.
 """
 import io
-from datetime import date, timedelta
+from datetime import timedelta
 
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-import matplotlib.ticker as ticker
 import numpy as np
 
-# Discord dark palette
-_BG       = "#313338"
-_PLOT_BG  = "#2b2d31"
-_TEXT     = "#f2f3f5"
-_MUTED    = "#80848e"
-_GREEN    = "#23a55a"
-_RED      = "#f23f42"
-_YELLOW   = "#f0b232"
-_BLURPLE  = "#5865f2"
-_FUTURE   = "#3c3d44"
-_GRID     = "#383a40"
+# Palette
+_BG     = "#000000"
+_C1     = "#E8E8ED"   # outer ring — should be (soft white)
+_C2     = "#0A84FF"   # inner ring — you are (iOS blue)
+_BAR    = "#0A84FF"
+_MUTED  = "#636366"
+_TEXT   = "#F5F5F7"
+
+matplotlib.rcParams["font.family"] = "Helvetica Neue"
+matplotlib.rcParams["axes.unicode_minus"] = False
 
 
 def _fmt(n: int) -> str:
@@ -34,141 +30,108 @@ def _fmt(n: int) -> str:
     return str(n)
 
 
+def _draw_ring(ax, radius: float, pct: float, color: str, lw: float = 13) -> None:
+    theta_full = np.linspace(0, 2 * np.pi, 300)
+    ax.plot(radius * np.cos(theta_full), radius * np.sin(theta_full),
+            color=color, lw=lw, solid_capstyle="round", alpha=0.18, zorder=1)
+    if pct > 0:
+        sweep = min(pct / 100, 0.9999) * 2 * np.pi
+        theta = np.linspace(np.pi / 2, np.pi / 2 - sweep, 300)
+        ax.plot(radius * np.cos(theta), radius * np.sin(theta),
+                color=color, lw=lw, solid_capstyle="round", zorder=2)
+
+
 def generate_chart(stats: dict) -> bytes:
-    fig = plt.figure(figsize=(8.5, 4.2), facecolor=_BG)
-
-    # Layout: top strip = dual bars, bottom = daily chart
-    gs = fig.add_gridspec(
-        2, 1,
-        height_ratios=[1, 2.4],
-        hspace=0.55,
-        left=0.01, right=0.99,
-        top=0.88, bottom=0.13,
-    )
-    ax_top = fig.add_subplot(gs[0])
-    ax_bot = fig.add_subplot(gs[1])
-
-    for ax in (ax_top, ax_bot):
-        ax.set_facecolor(_PLOT_BG)
-        for spine in ax.spines.values():
-            spine.set_visible(False)
-        ax.tick_params(colors=_MUTED, labelsize=8, length=0)
-
-    pct_used  = stats["pct_used"]
+    pct       = stats["pct_used"]
     ideal_pct = stats["ideal_pct"]
-
-    # ── TOP: dual horizontal progress bars ───────────────────────────────────
-    bh = 0.28  # bar height
-    pad = 0.08
-
-    # Tracks (grey background)
-    ax_top.barh([1, 0], [100, 100], height=bh, color=_FUTURE, left=0, zorder=1)
-
-    # Ideal bar
-    ax_top.barh(1, ideal_pct, height=bh, color=_YELLOW, left=0, zorder=2)
-
-    # Used bar — green if ahead of ideal, red if behind
-    used_color = _GREEN if pct_used >= ideal_pct * 0.9 else _RED
-    ax_top.barh(0, pct_used, height=bh, color=used_color, left=0, zorder=2)
-
-    # Vertical cursor at current % to make the gap obvious
-    ax_top.axvline(x=pct_used, ymin=0.05, ymax=0.95, color=used_color,
-                   linewidth=1.5, linestyle="--", zorder=3, alpha=0.7)
-
-    # Value labels inside / outside bars
-    for y, pct, color in ((0, pct_used, _TEXT), (1, ideal_pct, _TEXT)):
-        x_label = min(pct + 1.5, 97)
-        ax_top.text(x_label, y, f"{pct:.1f}%",
-                    va="center", ha="left", color=color,
-                    fontsize=9, fontweight="bold")
-
-    ax_top.set_xlim(0, 100)
-    ax_top.set_ylim(-0.4, 1.55)
-    ax_top.set_yticks([0, 1])
-    ax_top.set_yticklabels(["  Used", "  Ideal"], color=_MUTED, fontsize=8.5)
-    ax_top.xaxis.set_visible(False)
-
-    # ── BOTTOM: daily bar chart ───────────────────────────────────────────────
-    day_names   = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
-    week_start  = stats["week_start_date"]
-    today_idx   = stats["day_of_week"] - 1   # 0-based
+    grade     = stats["pace_grade"]
+    reset_str = stats["reset_in_str"]
+    week_num  = stats["today"].isocalendar()[1]
+    day_num   = stats["day_of_week"]
+    today_idx = day_num - 1
     ideal_daily = stats["ideal_daily"]
 
-    daily_tokens = []
-    for i in range(7):
-        d = week_start + timedelta(days=i)
-        daily_tokens.append(stats["daily_breakdown"].get(d.isoformat(), 0))
+    W = stats["week_start_date"]
+    day_names = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+    daily_tokens = [
+        stats["daily_breakdown"].get((W + timedelta(days=i)).isoformat(), 0)
+        for i in range(7)
+    ]
 
-    x = np.arange(7)
-    bar_colors = []
+    fig = plt.figure(figsize=(8.5, 4.0), facecolor=_BG)
+    gs  = fig.add_gridspec(1, 2, width_ratios=[1, 1.65], wspace=0.04,
+                           left=0.02, right=0.97, top=0.88, bottom=0.12)
+    ax_ring = fig.add_subplot(gs[0])
+    ax_bar  = fig.add_subplot(gs[1])
+
+    for ax in (ax_ring, ax_bar):
+        ax.set_facecolor(_BG)
+        for sp in ax.spines.values():
+            sp.set_visible(False)
+        ax.tick_params(colors=_MUTED, labelsize=8.5, length=0)
+
+    # ── Rings ─────────────────────────────────────────────────────────────────
+    ax_ring.set_xlim(-1.1, 1.1)
+    ax_ring.set_ylim(-1.1, 1.1)
+    ax_ring.set_aspect("equal")
+    ax_ring.axis("off")
+
+    _draw_ring(ax_ring, 0.78, ideal_pct, _C1, lw=13)
+    _draw_ring(ax_ring, 0.52, pct,       _C2, lw=13)
+
+    ax_ring.text(0,  0.12, f"{pct:.1f}%", ha="center", va="center",
+                 fontsize=24, fontweight="bold", color=_C2)
+    ax_ring.text(0, -0.14, f"of {ideal_pct:.0f}% ideal", ha="center", va="center",
+                 fontsize=9, color=_MUTED, fontweight="light")
+
+    for y, col, label in ((-0.82, _C2, "You are"), (-0.96, _C1, "Should be")):
+        ax_ring.plot(-0.80, y, "o", color=col, ms=5.5, zorder=3)
+        ax_ring.text(-0.66, y, label, va="center", color=_MUTED, fontsize=7.5)
+
+    # ── Bars ──────────────────────────────────────────────────────────────────
+    max_val = max(max(daily_tokens), 1)
+    y_max   = max_val * 2.6
+    x       = np.arange(7)
+
+    bar_cols = []
     for i, t in enumerate(daily_tokens):
-        if i > today_idx:
-            bar_colors.append(_FUTURE)
-        elif t >= ideal_daily:
-            bar_colors.append(_GREEN)
-        elif t > 0:
-            bar_colors.append(_RED)
-        else:
-            bar_colors.append(_FUTURE)
+        bar_cols.append(_BAR if (i <= today_idx and t > 0) else _MUTED + "22")
 
-    bars = ax_bot.bar(x, daily_tokens, color=bar_colors, width=0.55,
-                      zorder=2, edgecolor="none")
+    bars = ax_bar.bar(x, daily_tokens, color=bar_cols, width=0.42,
+                      zorder=2, linewidth=0)
 
-    # Highlight today's bar with a bright border
     if 0 <= today_idx < 7:
+        bars[today_idx].set_linewidth(1.3)
         bars[today_idx].set_edgecolor(_TEXT)
-        bars[today_idx].set_linewidth(1.5)
 
-    # Ideal daily reference line
-    if ideal_daily > 0:
-        ax_bot.axhline(y=ideal_daily, color=_YELLOW, linestyle="--",
-                       linewidth=1.2, zorder=3, alpha=0.85)
-        ax_bot.text(6.48, ideal_daily, f"ideal\n{_fmt(int(ideal_daily))}",
-                    ha="right", va="bottom", color=_YELLOW,
-                    fontsize=7, alpha=0.9)
+    ideal_y = min(ideal_daily, y_max * 0.88)
+    ax_bar.axhline(y=ideal_y, color=_C1, ls="--", lw=0.9, alpha=0.5, zorder=3)
+    ax_bar.text(6.45, ideal_y + y_max * 0.03, _fmt(int(ideal_daily)),
+                ha="right", color=_C1, fontsize=7.5, alpha=0.7)
 
-    # Value labels above non-zero bars
-    max_val = max(daily_tokens) if any(daily_tokens) else 1
-    for i, (bar, t) in enumerate(zip(bars, daily_tokens)):
+    for bar, t in zip(bars, daily_tokens):
         if t > 0:
-            ax_bot.text(
-                bar.get_x() + bar.get_width() / 2,
-                t + max_val * 0.02,
-                _fmt(t),
-                ha="center", va="bottom",
-                color=_TEXT, fontsize=7.5, fontweight="bold",
-            )
+            ax_bar.text(bar.get_x() + bar.get_width() / 2, t + y_max * 0.03,
+                        _fmt(t), ha="center", color=_TEXT,
+                        fontsize=8, fontweight="bold")
 
-    ax_bot.set_xticks(x)
-    ax_bot.set_xticklabels(day_names, color=_MUTED, fontsize=9)
-    ax_bot.yaxis.set_visible(False)
-    ax_bot.set_xlim(-0.5, 6.5)
-    ax_bot.set_ylim(0, max(max_val * 1.25, ideal_daily * 1.5, 1))
-    ax_bot.grid(axis="y", color=_GRID, linewidth=0.6, zorder=0)
-
-    # Mark today's day name
+    ax_bar.set_xticks(x)
+    ax_bar.set_xticklabels(day_names, color=_MUTED, fontsize=8.5)
     if 0 <= today_idx < 7:
-        ax_bot.get_xticklabels()[today_idx].set_color(_TEXT)
-        ax_bot.get_xticklabels()[today_idx].set_fontweight("bold")
+        ax_bar.get_xticklabels()[today_idx].set_color(_TEXT)
+        ax_bar.get_xticklabels()[today_idx].set_fontweight("bold")
+    ax_bar.yaxis.set_visible(False)
+    ax_bar.set_xlim(-0.6, 6.6)
+    ax_bar.set_ylim(0, y_max)
+    ax_bar.set_facecolor(_BG)
 
-    # ── Figure title ──────────────────────────────────────────────────────────
-    grade      = stats["pace_grade"]
-    reset_str  = stats["reset_in_str"]
-    week_num   = stats["today"].isocalendar()[1]
-    pace_score = stats["pace_score_pct"]
-    streak     = stats["streak"]
-
-    streak_txt = f"  ·  🔥 {streak}d streak" if streak > 0 else ""
-    title = (
-        f"Week {week_num}  ·  Grade {grade}  ({pace_score:.0f}% of ideal pace)"
-        f"  ·  Resets in {reset_str}{streak_txt}"
-    )
-    fig.text(0.5, 0.95, title, ha="center", va="top",
-             color=_MUTED, fontsize=9)
+    # ── Title ─────────────────────────────────────────────────────────────────
+    fig.text(0.5, 0.96,
+             f"Week {week_num}  ·  Day {day_num}/7  ·  Grade {grade}  ·  Resets {reset_str}",
+             ha="center", color=_MUTED, fontsize=8.5, fontweight="light")
 
     buf = io.BytesIO()
-    plt.savefig(buf, format="png", dpi=140, bbox_inches="tight",
-                facecolor=_BG, edgecolor="none")
+    plt.savefig(buf, format="png", dpi=155, bbox_inches="tight", facecolor=_BG)
     plt.close(fig)
     buf.seek(0)
     return buf.getvalue()
