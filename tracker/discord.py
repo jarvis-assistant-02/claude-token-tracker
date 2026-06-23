@@ -82,7 +82,7 @@ def send_daily_report(stats: dict) -> bool:
         f"DAY {s['day_of_week']}/7   WEEK {week}   {day}\n"
         f"\n"
         f"STATUS       {_grade_label(s['pace_grade'])}\n"
-        f"USED         {_fmt(s['tokens_used'])} / {_fmt(s['budget'])}\n"
+        f"USED         {_fmt(s['tokens_used'])} / {_fmt(s['budget'])}   ({s['pct_used']:.1f}%)\n"
         f"SHOULD BE    {s['ideal_pct']:.1f}%   (gap: {round(s['ideal_pct'] - s['pct_used'], 1)} pts)\n"
         f"TARGET       {_fmt(s['daily_target'])} tokens today\n"
         f"RESETS       Monday in {s['reset_in_str']}\n"
