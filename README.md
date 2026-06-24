@@ -2,7 +2,31 @@
 
 Daily Discord reports on your Claude Code weekly token usage — with a real chart and military-brief stats card.
 
-![Example Discord notification showing ring chart and stats](docs/preview.png)
+## Examples
+
+**Grade D — below pace (day 3 of 7, 19% used, should be 43%)**
+
+![Grade D chart](docs/sample_grade_d.png)
+
+**Grade A — crushing it (day 5 of 7, 74% used, ahead of pace)**
+
+![Grade A chart](docs/sample_grade_a.png)
+
+**Discord message (paired with the chart above):**
+
+```
+DAY 3/7   WEEK 26   Wed 24 Jun
+
+STATUS       D  — well behind
+USED         963K / 5.07M   (19.0%)
+SHOULD BE    42.9%   (gap: 23.9 pts)
+TARGET       1.03M tokens today
+RESETS       Monday in 5d 7h
+FORECAST     44% end of week
+STREAK       1 day above pace
+```
+
+---
 
 ## What it does
 
