@@ -5,14 +5,21 @@
 
 set -euo pipefail
 
-PLIST_LABEL="com.jarvis.claude-token-tracker"
+PLIST_LABEL="com.${USER}.claude-token-tracker"
 PLIST_PATH="$HOME/Library/LaunchAgents/${PLIST_LABEL}.plist"
 PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PYTHON="$PROJECT_DIR/.venv/bin/python"
 SCRIPT="$PROJECT_DIR/daily_report.py"
 LOG_DIR="$PROJECT_DIR/data"
-HOUR=9
+
+# Read REPORT_HOUR from .env if present, default to 19
+HOUR=19
 MINUTE=0
+ENV_FILE="$PROJECT_DIR/.env"
+if [[ -f "$ENV_FILE" ]]; then
+    _h=$(grep -E '^REPORT_HOUR=' "$ENV_FILE" | cut -d= -f2 | tr -d '[:space:]')
+    [[ -n "$_h" ]] && HOUR="$_h"
+fi
 
 if [[ "${1:-}" == "--uninstall" ]]; then
     launchctl unload "$PLIST_PATH" 2>/dev/null || true

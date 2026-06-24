@@ -14,6 +14,7 @@ We make one minimal call per day (8 input + 1 output = 9 tokens cost).
 """
 
 import json
+import platform
 import subprocess
 from datetime import datetime, timezone
 
@@ -26,6 +27,8 @@ _MODEL = "claude-haiku-4-5-20251001"
 
 def _get_oauth_token() -> str | None:
     """Read the Claude Code OAuth access token from macOS keychain."""
+    if platform.system() != "Darwin":
+        return None   # keychain is macOS-only
     try:
         result = subprocess.run(
             ["security", "find-generic-password", "-s", _KEYCHAIN_SERVICE, "-w"],
