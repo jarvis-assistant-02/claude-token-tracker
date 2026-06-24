@@ -22,10 +22,11 @@ _AVG_CONVO_TOKENS = 75_000
 def get_effective_budget(detected_limit: int | None = None) -> tuple[int, str]:
     """
     Return (budget_tokens, source):
-      'env'      — explicit WEEKLY_TOKEN_BUDGET env var
-      'detected' — inferred from a rate-limit error
-      'observed' — 110% of the highest completed-week total
-      'default'  — Pro plan estimate (50M)
+      'env'        — explicit WEEKLY_TOKEN_BUDGET env var
+      'detected'   — inferred from a rate-limit error in JSONL
+      'calibrated' — derived from API utilization % (persisted per-week)
+      'observed'   — 110% of the highest completed-week total
+      'default'    — Pro plan estimate (50M)
     """
     env_val = os.getenv("WEEKLY_TOKEN_BUDGET")
     if env_val:
@@ -45,11 +46,36 @@ def get_effective_budget(detected_limit: int | None = None) -> tuple[int, str]:
         except ValueError:
             pass
 
+    # Calibrated budget: derived from API utilization on first run of the week,
+    # then persisted so it stays stable for the rest of the week.
+    current_week_start = (date.today() - timedelta(days=date.today().weekday())).isoformat()
+    if get_budget("calibrated_week_start") == current_week_start:
+        calibrated = get_budget("calibrated_budget")
+        if calibrated:
+            try:
+                return int(calibrated), "calibrated"
+            except ValueError:
+                pass
+
     peak = get_peak_weekly_tokens()
     if peak > 0:
         return int(peak * 1.10), "observed"
 
     return _DEFAULT_BUDGET, "default"
+
+
+def persist_calibrated_budget(stats: dict) -> None:
+    """
+    Persist a newly calibrated budget to the DB so it stays stable for the
+    rest of the week. Call this from the entry point after build_stats().
+    Only writes when budget_source is exactly "calibrated" (freshly inferred
+    from the API — not already loaded from DB).
+    """
+    if stats.get("budget_source") != "calibrated":
+        return
+    week_start_iso = (date.today() - timedelta(days=date.today().weekday())).isoformat()
+    set_budget("calibrated_budget", str(stats["budget"]))
+    set_budget("calibrated_week_start", week_start_iso)
 
 
 def _pace_grade(pace_score_pct: float) -> str:
@@ -111,7 +137,9 @@ def build_stats(
         if budget_source == "default" and util > 0.01 and tokens_used > 0:
             inferred = int(tokens_used / util)
             if inferred < budget * 0.5:
-                # Inferred is substantially lower → Pro plan is smaller than 50M estimate
+                # Inferred budget is substantially lower than the 50M default,
+                # meaning the real plan limit is smaller. Caller is responsible
+                # for persisting this via persist_calibrated_budget().
                 budget = inferred
                 budget_source = "calibrated"
             else:

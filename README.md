@@ -127,9 +127,11 @@ Budget is resolved in priority order:
 
 ```bash
 source .venv/bin/activate
-pip install pytest
+pip install -r requirements-dev.txt
 pytest tests/ -v
 ```
+
+Tests run automatically on every push via GitHub Actions (`.github/workflows/tests.yml`).
 
 ---
 

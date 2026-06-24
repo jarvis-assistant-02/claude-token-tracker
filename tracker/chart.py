@@ -125,10 +125,13 @@ def generate_chart(stats: dict) -> bytes:
     ax_bar.set_ylim(0, y_max)
     ax_bar.set_facecolor(_BG)
 
-    # ── Title ─────────────────────────────────────────────────────────────────
+    # ── Title + caption ───────────────────────────────────────────────────────
     fig.text(0.5, 0.96,
              f"Week {week_num}  ·  Day {day_num}/7  ·  Grade {grade}  ·  Resets {reset_str}",
              ha="center", color=_MUTED, fontsize=8.5, fontweight="light")
+    fig.text(0.5, 0.01,
+             "bars = this device  ·  ring = account-wide",
+             ha="center", color=_MUTED, fontsize=6.5, fontweight="light", alpha=0.6)
 
     buf = io.BytesIO()
     plt.savefig(buf, format="png", dpi=155, bbox_inches="tight", facecolor=_BG)

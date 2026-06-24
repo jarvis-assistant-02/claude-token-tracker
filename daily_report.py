@@ -20,12 +20,12 @@ except ImportError:
 
 from tracker.api_usage import fetch_real_usage
 from tracker.usage     import sum_tokens_for_week
-from tracker.stats     import build_stats
+from tracker.stats     import build_stats, persist_calibrated_budget
 from tracker.storage   import save_snapshot, init_db
 from tracker.discord   import send_daily_report
 
 WEEK_START_DOW   = int(os.getenv("WEEK_START_DAY",  "0"))   # 0 = Monday
-WEEK_RESET_HOUR  = int(os.getenv("WEEK_RESET_HOUR", "0"))   # 9 = 09:00
+WEEK_RESET_HOUR  = int(os.getenv("WEEK_RESET_HOUR", "9"))   # 9 = 09:00 local
 
 
 def _print_stats(s: dict) -> None:
@@ -90,6 +90,9 @@ def run(dry_run: bool = False, stats_only: bool = False) -> None:
     )
 
     _print_stats(stats)
+
+    # Persist a newly calibrated budget so subsequent runs stay stable this week
+    persist_calibrated_budget(stats)
 
     if stats_only:
         return
