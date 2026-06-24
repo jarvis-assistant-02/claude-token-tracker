@@ -92,11 +92,17 @@ def send_daily_report(stats: dict) -> bool:
         + "\n```"
     )
 
+    if "api" in s["budget_source"]:
+        data_note = "account-wide · API"
+    elif s["budget_source"] == "calibrated":
+        data_note = "API-calibrated budget"
+    else:
+        data_note = "local JSONL only"
     embed1 = {
         "description": description,
         "color":       color,
         "timestamp":   datetime.now(timezone.utc).isoformat(),
-        "footer":      {"text": f"Pro plan · {s['budget_source']} budget · Claude Token Tracker"},
+        "footer":      {"text": f"Pro plan · {data_note} · Claude Token Tracker"},
     }
 
     embed2 = {

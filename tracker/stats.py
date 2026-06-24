@@ -86,16 +86,43 @@ def build_stats(
     detected_limit: int | None = None,
     week_start_dow: int = 0,
     week_reset_hour: int = 0,
+    api_usage: dict | None = None,
 ) -> dict:
     budget, budget_source = get_effective_budget(detected_limit)
     today = date.today()
+
+    # If the API gave us a precise reset timestamp, use it — more accurate than JSONL bounds
+    if api_usage and api_usage.get("reset_7d"):
+        week_end = api_usage["reset_7d"]
+
     week_start_date = week_start.astimezone(datetime.now().astimezone().tzinfo).date()
 
     day_of_week   = (today - week_start_date).days + 1   # 1-based
     days_elapsed  = max(day_of_week, 1)
     days_remaining = max(7 - day_of_week, 0)
 
-    pct_used     = (tokens_used / budget * 100) if budget > 0 else 0.0
+    # Real account-wide utilisation from API headers (preferred over local JSONL ratio)
+    local_pct = (tokens_used / budget * 100) if budget > 0 else 0.0
+    if api_usage and api_usage.get("utilization_7d") is not None:
+        util = api_usage["utilization_7d"]
+        pct_used = round(util * 100, 2)
+        # If local tokens ≈ account-wide (within 20%) and budget source is default,
+        # calibrate the real budget from: budget = local_tokens / utilization
+        if budget_source == "default" and util > 0.01 and tokens_used > 0:
+            inferred = int(tokens_used / util)
+            if inferred < budget * 0.5:
+                # Inferred is substantially lower → Pro plan is smaller than 50M estimate
+                budget = inferred
+                budget_source = "calibrated"
+            else:
+                budget_source = budget_source + "+api"
+        else:
+            budget_source = budget_source + "+api"
+        tokens_used_display = int(budget * util)
+    else:
+        pct_used = local_pct
+        tokens_used_display = tokens_used
+
     pct_elapsed  = (days_elapsed / 7) * 100
     ideal_pct    = pct_elapsed
     ideal_tokens = int(budget * days_elapsed / 7)
@@ -104,11 +131,11 @@ def build_stats(
     pace_score_pct = (pct_used / ideal_pct * 100) if ideal_pct > 0 else 0.0
     pace_grade     = _pace_grade(pace_score_pct)
 
-    daily_avg      = tokens_used / days_elapsed if days_elapsed > 0 else 0
+    daily_avg       = tokens_used_display / days_elapsed if days_elapsed > 0 else 0
     projected_total = int(daily_avg * 7)
     projected_pct   = (projected_total / budget * 100) if budget > 0 else 0.0
 
-    tokens_remaining = budget - tokens_used
+    tokens_remaining = budget - tokens_used_display
     daily_target     = int(tokens_remaining / days_remaining) if days_remaining > 0 else 0
 
     # Status signal based on projected end-of-week %
@@ -120,7 +147,7 @@ def build_stats(
         status = "under_using"
 
     # Human context
-    human_convos = max(0, int(tokens_remaining / _AVG_CONVO_TOKENS))
+    human_convos = max(0, int(max(tokens_remaining, 0) / _AVG_CONVO_TOKENS))
 
     # Countdown to reset
     reset_in_str = _reset_countdown(week_end)
@@ -145,7 +172,9 @@ def build_stats(
     return {
         "budget":            budget,
         "budget_source":     budget_source,
-        "tokens_used":       tokens_used,
+        "tokens_used":       tokens_used_display,
+        "local_tokens":      tokens_used,       # raw JSONL count for this machine only
+        "local_pct":         round(local_pct, 1),
         "input_tokens":      input_tokens,
         "output_tokens":     output_tokens,
         "cache_tokens":      cache_tokens,

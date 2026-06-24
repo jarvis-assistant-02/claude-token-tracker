@@ -18,10 +18,11 @@ try:
 except ImportError:
     pass
 
-from tracker.usage   import sum_tokens_for_week
-from tracker.stats   import build_stats
-from tracker.storage import save_snapshot, init_db
-from tracker.discord import send_daily_report
+from tracker.api_usage import fetch_real_usage
+from tracker.usage     import sum_tokens_for_week
+from tracker.stats     import build_stats
+from tracker.storage   import save_snapshot, init_db
+from tracker.discord   import send_daily_report
 
 WEEK_START_DOW   = int(os.getenv("WEEK_START_DAY",  "0"))   # 0 = Monday
 WEEK_RESET_HOUR  = int(os.getenv("WEEK_RESET_HOUR", "0"))   # 9 = 09:00
@@ -32,7 +33,8 @@ def _print_stats(s: dict) -> None:
     print(f"  Claude Code Token Report — {s['today'].strftime('%A %d %b %Y')}")
     print(f"  Week day {s['day_of_week']}/7  ·  Grade: {s['pace_grade']}  ·  Budget: {s['budget_source']}")
     print("=" * 60)
-    print(f"  Used:          {s['tokens_used']:>14,}  ({s['pct_used']}%)")
+    src = "account-wide" if "api" in s["budget_source"] else ("API-calibrated" if s["budget_source"] == "calibrated" else "local JSONL")
+    print(f"  Used:          {s['tokens_used']:>14,}  ({s['pct_used']}%)  [{src}]")
     print(f"  Budget:        {s['budget']:>14,}")
     print(f"  Ideal by now:  {s['ideal_tokens']:>14,}  ({s['ideal_pct']}%)")
     print(f"  Pace score:    {s['pace_score_pct']:>13.1f}%  (Grade {s['pace_grade']})")
@@ -57,13 +59,21 @@ def _print_stats(s: dict) -> None:
 
 
 def run(dry_run: bool = False, stats_only: bool = False) -> None:
+    print("[tracker] Fetching real account-wide usage from Anthropic API…")
+    api_usage = fetch_real_usage()
+    if api_usage:
+        print(f"[tracker] API: {api_usage['utilization_7d']:.1%} used  |  "
+              f"resets {api_usage['reset_7d'].strftime('%a %Y-%m-%d %H:%M UTC') if api_usage['reset_7d'] else '?'}")
+    else:
+        print("[tracker] API usage unavailable — using local JSONL only")
+
     print("[tracker] Parsing Claude Code session files…")
     raw = sum_tokens_for_week(
         week_start_dow=WEEK_START_DOW,
         week_reset_hour=WEEK_RESET_HOUR,
     )
     print(f"[tracker] Scanned {raw['files_scanned']} JSONL files")
-    print(f"[tracker] Tokens this week: {raw['total_tokens']:,}")
+    print(f"[tracker] Local tokens this week: {raw['total_tokens']:,}")
 
     stats = build_stats(
         tokens_used=raw["total_tokens"],
@@ -76,6 +86,7 @@ def run(dry_run: bool = False, stats_only: bool = False) -> None:
         detected_limit=raw["detected_limit"],
         week_start_dow=WEEK_START_DOW,
         week_reset_hour=WEEK_RESET_HOUR,
+        api_usage=api_usage,
     )
 
     _print_stats(stats)
@@ -86,7 +97,7 @@ def run(dry_run: bool = False, stats_only: bool = False) -> None:
     if not dry_run:
         init_db()
         save_snapshot(
-            tokens_used=stats["tokens_used"],
+            tokens_used=stats["local_tokens"],   # always save raw JSONL count for daily breakdown
             input_tokens=stats["input_tokens"],
             output_tokens=stats["output_tokens"],
             cache_tokens=stats["cache_tokens"],
