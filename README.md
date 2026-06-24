@@ -1,19 +1,14 @@
 # Claude Token Tracker
 
-Daily Discord reports on your Claude Code weekly token usage — with a real chart and military-brief stats card.
+Track your Claude Code weekly token usage and receive a daily Discord report before your budget resets.
 
 ## Examples
 
-**Grade D — below pace (day 3 of 7, 19% used, should be 43%)**
+| Below pace — Day 3/7, 19% used (should be 43%) | On track — Day 5/7, 74% used (ahead of pace) |
+|---|---|
+| ![Grade D chart](docs/sample_grade_d.png) | ![Grade A chart](docs/sample_grade_a.png) |
 
-![Grade D chart](docs/sample_grade_d.png)
-
-**Grade A — crushing it (day 5 of 7, 74% used, ahead of pace)**
-
-![Grade A chart](docs/sample_grade_a.png)
-
-**Discord message (paired with the chart above):**
-
+**Discord notification (text card + chart):**
 ```
 DAY 3/7   WEEK 26   Wed 24 Jun
 
@@ -28,21 +23,37 @@ STREAK       1 day above pace
 
 ---
 
-## What it does
+## Platform support
 
-- Reads real account-wide usage from the Anthropic API rate-limit headers (macOS)
-- Parses `~/.claude/projects/**/*.jsonl` for the daily breakdown bar chart
-- Auto-calibrates your weekly budget from the API utilisation %
-- Sends a Discord embed every evening: % used, pace grade (A–F), daily target, projection, countdown to reset, week-over-week comparison, streak
+| Platform | Usage data | Scheduler |
+|---|---|---|
+| **macOS** | API headers + local JSONL | launchd (built-in) |
+| Linux | Local JSONL only | cron (manual setup) |
+| Windows | Local JSONL only | Task Scheduler (manual setup) |
+
+macOS is the primary target. Linux and Windows support is possible with minor adaptations (see [Contributing](#contributing)).
+
+---
+
+## How it works
+
+On macOS, the tracker reads the Anthropic OAuth token from the system keychain (stored there by Claude Code) and makes one minimal API call per day. The response headers include `anthropic-ratelimit-unified-7d-utilization` — the authoritative server-side signal Anthropic uses to enforce weekly limits. This covers usage from all devices and clients, not just the local machine.
+
+Local JSONL files (`~/.claude/projects/**/*.jsonl`) are parsed separately for the daily breakdown bar chart and to auto-calibrate the weekly budget.
+
+On non-macOS platforms the keychain step is skipped and only local JSONL is used.
+
+---
 
 ## Requirements
 
-- macOS (the launchd scheduler and keychain read are macOS-only)
-- Claude Code installed and signed in
 - Python 3.11+
-- A Discord server where you can create a webhook
+- Claude Code installed and signed in (macOS)
+- A Discord server with webhook permissions
 
-## Setup
+---
+
+## Installation
 
 ```bash
 git clone https://github.com/jarvis-assistant-02/claude-token-tracker
@@ -53,54 +64,94 @@ source .venv/bin/activate
 pip install -r requirements.txt
 
 cp .env.example .env
-# Edit .env — at minimum fill in DISCORD_WEBHOOK_URL
 ```
 
-**Create the Discord webhook:**
-1. Discord server → Settings → Integrations → Webhooks → New Webhook
+Edit `.env` and set `DISCORD_WEBHOOK_URL` (see [Discord setup](#discord-setup) below).
+
+```bash
+bash install_schedule.sh   # installs the launchd agent (macOS)
+```
+
+---
+
+## Discord setup
+
+1. In your Discord server go to **Settings → Integrations → Webhooks → New Webhook**
 2. Assign it to a channel (e.g. `#claude-tokens`)
-3. Copy the URL → paste as `DISCORD_WEBHOOK_URL` in `.env`
+3. Copy the webhook URL and set it as `DISCORD_WEBHOOK_URL` in `.env`
 
-**Install the daily schedule:**
-```bash
-bash install_schedule.sh
-```
-This installs a launchd agent that runs every day at the hour set by `REPORT_HOUR` in `.env` (default 19:00). If the machine was asleep at that time, launchd fires it on the next wake.
+---
 
-## Test it
+## Configuration
 
-```bash
-source .venv/bin/activate
-python daily_report.py --dry-run   # prints stats, skips DB save and Discord send
-python daily_report.py             # full run: saves snapshot + sends Discord
-```
-
-## Configuration (`.env`)
+All options are set in `.env` (copy from `.env.example`):
 
 | Variable | Default | Description |
 |---|---|---|
-| `DISCORD_WEBHOOK_URL` | — | **Required.** Webhook URL for your Discord channel |
-| `WEEKLY_TOKEN_BUDGET` | auto | Leave empty for auto-detection. Set manually if you know your plan's exact limit |
-| `WEEK_START_DAY` | `0` | Day the week resets: 0 = Monday |
-| `WEEK_RESET_HOUR` | `9` | Local hour (24h) when the week resets. Claude Pro = 9 AM Lisbon / 8 AM UTC |
-| `REPORT_HOUR` | `19` | Local hour to send the daily Discord report |
+| `DISCORD_WEBHOOK_URL` | — | **Required.** Discord webhook URL |
+| `WEEKLY_TOKEN_BUDGET` | auto | Manual budget override. Leave empty to auto-detect |
+| `WEEK_START_DAY` | `0` | Week reset day (0 = Monday) |
+| `WEEK_RESET_HOUR` | `9` | Local hour the week resets (Pro plan = 9 AM Lisbon / 08:00 UTC) |
+| `REPORT_HOUR` | `19` | Local hour to send the daily report |
 
-## How usage is calculated
+---
 
-**On macOS**, the tracker makes one minimal Anthropic API call per day (9 tokens) and reads the `anthropic-ratelimit-unified-7d-utilization` header — the same server-side signal that enforces your weekly limit. This gives you the real account-wide percentage, including usage from all devices and claude.ai web. It then cross-references with local JSONL files to produce an accurate budget estimate.
-
-**On other platforms**, or if the API call fails, the tracker falls back to parsing `~/.claude/projects/**/*.jsonl` directly.
-
-## Security
-
-- Your Discord webhook URL is stored only in `.env`, which is gitignored and never committed
-- The Anthropic OAuth token is read at runtime from macOS keychain and is never logged, stored, or transmitted anywhere other than `api.anthropic.com`
-- The project makes no outbound requests other than one daily Anthropic API call and the Discord webhook POST
-
-## Uninstall
+## Usage
 
 ```bash
+source .venv/bin/activate
+
+python daily_report.py            # parse → save snapshot → send Discord
+python daily_report.py --dry-run  # parse and print stats, skip save and send
+python daily_report.py --stats    # print stats only
+
+bash install_schedule.sh          # install launchd agent
 bash install_schedule.sh --uninstall
 ```
 
-This removes the launchd agent. You can then delete the project folder.
+---
+
+## Budget auto-detection
+
+Budget is resolved in priority order:
+
+1. `WEEKLY_TOKEN_BUDGET` env var
+2. Inferred from `local_tokens / api_utilization` (requires macOS + Claude Code sign-in)
+3. Rate-limit error recorded in the local JSONL files
+4. 110% of the highest completed-week total in `data/tracker.db`
+5. Fallback: 50,000,000 (Pro plan estimate)
+
+---
+
+## Running tests
+
+```bash
+source .venv/bin/activate
+pip install pytest
+pytest tests/ -v
+```
+
+---
+
+## Security
+
+| Concern | Detail |
+|---|---|
+| Discord webhook URL | Stored in `.env` only — gitignored, never committed |
+| Anthropic OAuth token | Read at runtime from macOS keychain, never written to disk or logged |
+| Outbound requests | One daily Anthropic API call (9 tokens) and the Discord webhook POST |
+
+---
+
+## Contributing
+
+Pull requests are welcome. To add Linux/Windows support the two areas that need adapting are:
+
+- **Keychain read** (`tracker/api_usage.py`) — replace the `security` CLI call with the platform equivalent (e.g. `secret-tool` on Linux, `keyring` library cross-platform)
+- **Scheduler** (`install_schedule.sh`) — add a cron or Task Scheduler equivalent for non-macOS
+
+---
+
+## License
+
+MIT
